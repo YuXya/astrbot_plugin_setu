@@ -201,6 +201,16 @@ class PluginSetu(Star):
         async for result in self._get_setu(event, tags, r18=self.r18):
             yield result
 
+    @filter.llm_tool(name="setu_get")
+    async def llm_get_setu(self, event: AstrMessageEvent, tags: str = ""):
+        '''获取一张随机涩图，或根据标签获取特定涩图。当用户想要图片、涩图、来张图、指定标签图片时调用。
+
+        Args:
+            tags(string): 图片标签，可为空。为空时随机获取；单个标签如 白丝；多个可选标签用英文逗号分隔，如 白丝,黑丝；多个必须同时满足的条件用 & 分隔，如 猫耳&白丝。
+        '''
+        async for result in self._get_setu(event, tags or None, r18=self.r18):
+            yield result
+
     @setu.command("r18")
     async def get_r18(self, event: AstrMessageEvent, tags: str = None):
         """随机 R-18 色图"""
