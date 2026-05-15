@@ -23,8 +23,8 @@ async def image_obfus(img_data):
                 points = []
                 for _ in range(3):
                     while True:
-                        x = random.randint(0, width - 1)
-                        y = random.randint(0, height - 1)
+                        x = random.randint(0, width - 1)  
+                        y = random.randint(0, height - 1)   
                         if (x, y) not in points:
                             points.append((x, y))
                             break
@@ -206,7 +206,7 @@ class PluginSetu(Star):
         '''获取一张随机涩图，或根据标签获取特定涩图。当用户想要图片、涩图、来张图、指定标签图片时调用。
 
         Args:
-            tags(string): 图片标签，可为空。为空时随机获取；单个标签如 白丝；多个可选标签用英文逗号分隔，如 白丝,黑丝；多个必须同时满足的条件用 & 分隔，如 猫耳&白丝。
+            tags(string): 图片标签，可为空；多个 OR 标签用英文逗号分隔，多个 AND 条件用 & 分隔
         '''
         async for result in self._get_setu(event, tags or None, r18=self.r18):
             yield result
