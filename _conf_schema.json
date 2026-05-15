@@ -11,6 +11,12 @@
         "description": "转发图片，仅限QQ",
         "type": "bool"
     },
+    "r18": {
+        "description": "R18 模式：0 为非 R18，1 为 R18，2 为混合",
+        "type": "int",
+        "options": [0, 1, 2],
+        "default": 0
+    },
     "image_size": {
         "description": "图片质量控制",
         "type": "string",

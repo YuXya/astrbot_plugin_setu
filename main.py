@@ -65,9 +65,23 @@ class PluginSetu(Star):
         self.exclude_ai = self.config.get("exclude_ai")
         self.image_hash_break = self.config.get("image_hash_break")
         self.send_forward = self.config.get("send_forward")
+        self.r18 = self._normalize_r18(self.config.get("r18", 0))
         self.image_size = self.config.get("image_size")
         self.image_info = self.config.get("image_info")
         self.detailed_info = ""
+
+    def _normalize_r18(self, r18) -> int:
+        try:
+            r18 = int(r18)
+        except (TypeError, ValueError):
+            logger.warning(f"无效的 R18 模式配置: {r18}，已回退为 0")
+            return 0
+
+        if r18 not in (0, 1, 2):
+            logger.warning(f"无效的 R18 模式配置: {r18}，已回退为 0")
+            return 0
+
+        return r18
 
     def parse_tags(self, tags: str) -> list[list[str]]:
         """解析标签字符串"""
@@ -184,7 +198,7 @@ class PluginSetu(Star):
     @setu.command("get")
     async def get(self, event: AstrMessageEvent, tags: str = None):
         """随机色图"""
-        async for result in self._get_setu(event, tags, r18=0):
+        async for result in self._get_setu(event, tags, r18=self.r18):
             yield result
 
     @setu.command("r18")
