@@ -118,6 +118,7 @@ class PluginSetu(Star):
                         "size": [self.image_size],
                         "tag": tags,
                         "excludeAI": self.exclude_ai,
+                        "proxy": "i.yuki.sh",
                     }
 
                     async with session.post(

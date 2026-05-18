@@ -72,7 +72,7 @@ https://api.lolicon.app/setu/v2?size=original&size=regular
 | `keyword` | `string` | 无 | 从标题、作者、标签中按关键字模糊匹配，大小写不敏感。性能和准确度较差，建议使用 `tag`。 |
 | `tag` | `string[]` 或二维数组 | 无 | 按标签、作者名、标题进行 AND / OR 匹配。详见 `tag` 说明。 |
 | `size` | `string[]` | `["original"]` | 返回指定图片规格的地址。详见 `size` 说明。 |
-| `proxy` | `string` | `i.pixiv.re` | 设置图片地址使用的在线反代服务。详见 `proxy` 说明。 |
+| `proxy` | `string` | `i.yuki.sh` | 设置图片地址使用的在线反代服务。详见 `proxy` 说明。 |
 | `dateAfter` | `int` | 无 | 返回在该时间及以后上传的作品，单位为毫秒时间戳。 |
 | `dateBefore` | `int` | 无 | 返回在该时间及以前上传的作品，单位为毫秒时间戳。 |
 | `dsc` | `boolean` | `false` | 禁用部分缩写 `keyword` 和 `tag` 的自动转换。 |
@@ -164,11 +164,11 @@ POST 也可以直接使用二维数组：
 
 | 规格 | 示例地址 |
 | --- | --- |
-| `original` | `https://i.pixiv.re/img-original/img/2021/06/14/17/25/59/90551655_p0.jpg` |
-| `regular` | `https://i.pixiv.re/img-master/img/2021/06/14/17/25/59/90551655_p0_master1200.jpg` |
-| `small` | `https://i.pixiv.re/c/540x540_70/img-master/img/2021/06/14/17/25/59/90551655_p0_master1200.jpg` |
-| `thumb` | `https://i.pixiv.re/c/250x250_80_a2/img-master/img/2021/06/14/17/25/59/90551655_p0_square1200.jpg` |
-| `mini` | `https://i.pixiv.re/c/48x48/img-master/img/2021/06/14/17/25/59/90551655_p0_square1200.jpg` |
+| `original` | `https://i.yuki.sh/img-original/img/2021/06/14/17/25/59/90551655_p0.jpg` |
+| `regular` | `https://i.yuki.sh/img-master/img/2021/06/14/17/25/59/90551655_p0_master1200.jpg` |
+| `small` | `https://i.yuki.sh/c/540x540_70/img-master/img/2021/06/14/17/25/59/90551655_p0_master1200.jpg` |
+| `thumb` | `https://i.yuki.sh/c/250x250_80_a2/img-master/img/2021/06/14/17/25/59/90551655_p0_square1200.jpg` |
+| `mini` | `https://i.yuki.sh/c/48x48/img-master/img/2021/06/14/17/25/59/90551655_p0_square1200.jpg` |
 
 如果 `size` 参数不符合上述任一规格，响应中的 `urls` 会是空对象：
 
@@ -183,7 +183,7 @@ Pixiv 图片域名 `i.pximg.net` 有防盗链机制，不包含 `www.pixiv.net` 
 默认反代为：
 
 ```text
-i.pixiv.re
+i.yuki.sh
 ```
 
 当 `proxy` 不指定协议时，API 会自动补充 `https://`。
@@ -204,10 +204,10 @@ i.pixiv.re
 以下写法等价：
 
 ```text
-i.pixiv.re
-https://i.pixiv.re
-i.pixiv.re/{{path}}
-https://i.pixiv.re/{{path}}
+i.yuki.sh
+https://i.yuki.sh
+i.yuki.sh/{{path}}
+https://i.yuki.sh/{{path}}
 ```
 
 如果使用了占位符，但没有使用 `{{path}}`，则 `size` 参数无意义，不同规格返回的地址会相同。
@@ -217,7 +217,7 @@ https://i.pixiv.re/{{path}}
 可以通过 `proxy` 占位符构造特定大小的缩略图：
 
 ```text
-https://i.pixiv.re/c/<size>x<size>/img-master/img/{{datePath}}/{{pid}}_p{{p}}_<master|square>1200.jpg
+https://i.yuki.sh/c/<size>x<size>/img-master/img/{{datePath}}/{{pid}}_p{{p}}_<master|square>1200.jpg
 ```
 
 说明：
@@ -313,7 +313,7 @@ API 内部包含少量自动转换规则，会把一些不适合直接搜索的�
       "aiType": 1,
       "uploadDate": 1623662759000,
       "urls": {
-        "original": "https://i.pixiv.re/img-original/img/2021/06/14/17/25/59/90551655_p0.jpg"
+        "original": "https://i.yuki.sh/img-original/img/2021/06/14/17/25/59/90551655_p0.jpg"
       }
     }
   ]
