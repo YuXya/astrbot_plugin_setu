@@ -100,7 +100,13 @@ class PluginSetu(Star):
     def setu(self):
         pass
 
-    async def _get_setu(self, event: AstrMessageEvent, tags: str = None, r18: int = 0):
+    async def _get_setu(
+        self,
+        event: AstrMessageEvent,
+        tags: str = None,
+        r18: int = 0,
+        reply_after_image: bool = False,
+    ):
         tags = self.parse_tags(tags)
         send_forward = self.send_forward
 
@@ -176,6 +182,9 @@ class PluginSetu(Star):
                                     yield event.chain_result([node])
                                 else:
                                     yield event.chain_result(chain)
+
+                                if reply_after_image:
+                                    yield event.plain_result("图片已发送。")
                                 return
 
                         except aiohttp.ClientError as e:
@@ -209,7 +218,12 @@ class PluginSetu(Star):
         Args:
             tags(string): 图片标签，可为空；多个 OR 标签用英文逗号分隔，多个 AND 条件用 & 分隔
         '''
-        async for result in self._get_setu(event, tags or None, r18=self.r18):
+        async for result in self._get_setu(
+            event,
+            tags or None,
+            r18=self.r18,
+            reply_after_image=True,
+        ):
             yield result
 
     @setu.command("r18")
