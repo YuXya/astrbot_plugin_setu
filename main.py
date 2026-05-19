@@ -216,7 +216,7 @@ class PluginSetu(Star):
         '''获取一张随机涩图，或根据标签获取特定涩图。当用户想要图片、涩图、来张图、指定标签图片时调用。
 
         Args:
-            tags(string): 图片标签，可为空；多个 OR 标签用英文逗号分隔，多个 AND 条件用 & 分隔
+             tags(string): 图片标签，可为空；请优先使用日语标签；如果用户用中文或英文描述，请先翻译成适合日本插画网站检索的日语标签；多个 OR 标签用英文逗号分隔，多个 AND 条件用 & 分隔
         '''
         async for result in self._get_setu(
             event,
