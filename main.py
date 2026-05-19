@@ -184,7 +184,7 @@ class PluginSetu(Star):
                                     yield event.chain_result(chain)
 
                                 if reply_after_image:
-                                    yield event.plain_result("图片已发送。")
+                                    yield event.plain_result("涩图已发送。")
                                 return
 
                         except aiohttp.ClientError as e:
