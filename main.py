@@ -2,6 +2,7 @@ from astrbot.api import logger
 from astrbot.api.all import *
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
+from astrbot.core.message.message_event_result import MessageChain
 import aiohttp
 
 
@@ -62,12 +63,12 @@ class PluginSetu(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.config = config
-        self.exclude_ai = self.config.get("exclude_ai")
-        self.image_hash_break = self.config.get("image_hash_break")
-        self.send_forward = self.config.get("send_forward")
+        self.exclude_ai = self.config.get("exclude_ai", False)
+        self.image_hash_break = self.config.get("image_hash_break", False)
+        self.send_forward = self.config.get("send_forward", False)
         self.r18 = self._normalize_r18(self.config.get("r18", 0))
-        self.image_size = self.config.get("image_size")
-        self.image_info = self.config.get("image_info")
+        self.image_size = self.config.get("image_size", "original")
+        self.image_info = self.config.get("image_info", "带标签的基本信息")
         self.detailed_info = ""
 
     def _normalize_r18(self, r18) -> int:
@@ -100,20 +101,34 @@ class PluginSetu(Star):
     def setu(self):
         pass
 
-    async def _get_setu(
-        self,
-        event: AstrMessageEvent,
-        tags: str = None,
-        r18: int = 0,
-        reply_after_image: bool = False,
-    ):
-        tags = self.parse_tags(tags)
-        send_forward = self.send_forward
+    def _unwrap_event(self, event):
+        """兼容旧版 LLM Tool 误传 ContextWrapper 的情况。"""
+        return getattr(getattr(event, "context", None), "event", event)
 
-        if self.send_forward:
-            if event.get_platform_name() != "aiocqhttp":
-                send_forward = False
-                logger.info("不支持当前平台，已禁用转发")
+    def _build_image_chain(self, img_data, img_title, img_author, img_pid, img_tags):
+        self.detailed_info = (
+            f"标题：{img_title}\n"
+            f"作者：{img_author}\n"
+            f"PID：{img_pid}\n"
+            f"标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
+        )
+
+        if self.image_info == "只有图片":
+            return [Image.fromBytes(img_data)]
+
+        if self.image_info == "基本信息":
+            return [
+                Image.fromBytes(img_data),
+                Plain(f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}"),
+            ]
+
+        return [
+            Image.fromBytes(img_data),
+            Plain(self.detailed_info),
+        ]
+
+    async def _fetch_setu_chain(self, tags: str = None, r18: int = 0):
+        tags = self.parse_tags(tags)
 
         retry_count = 0
         while retry_count < 3:
@@ -136,10 +151,10 @@ class PluginSetu(Star):
                         resp = await response.json()
 
                         if not resp["data"]:
-                            yield event.plain_result("未获取到图片")
-                            return
+                            return None, "未获取到图片"
 
-                        img_url = resp["data"][0]["urls"][self.image_size]
+                        img = resp["data"][0]
+                        img_url = img["urls"][self.image_size]
                         img_title = resp["data"][0]["title"]
                         img_author = resp["data"][0]["author"]
                         img_pid = resp["data"][0]["pid"]
@@ -155,37 +170,16 @@ class PluginSetu(Star):
                                 if self.image_hash_break:
                                     img_data = await image_obfus(img_data)
 
-                                # 暂存最新图片的详细信息
-                                self.detailed_info = f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
-
-                                if self.image_info == "只有图片":
-                                    chain = [Image.fromBytes(img_data)]
-                                elif self.image_info == "基本信息":
-                                    chain = [
-                                        Image.fromBytes(img_data),
-                                        Plain(
-                                            f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}"
-                                        ),
-                                    ]
-                                else:
-                                    chain = [
-                                        Image.fromBytes(img_data),
-                                        Plain(self.detailed_info),
-                                    ]
-
-                                if send_forward:
-                                    node = Node(
-                                        uin=event.get_self_id(),
-                                        name="Setu",
-                                        content=chain,
-                                    )
-                                    yield event.chain_result([node])
-                                else:
-                                    yield event.chain_result(chain)
-
-                                if reply_after_image:
-                                    yield event.plain_result("涩图已发送。")
-                                return
+                                return (
+                                    self._build_image_chain(
+                                        img_data,
+                                        img_title,
+                                        img_author,
+                                        img_pid,
+                                        img_tags,
+                                    ),
+                                    None,
+                                )
 
                         except aiohttp.ClientError as e:
                             retry_count += 1
@@ -196,14 +190,34 @@ class PluginSetu(Star):
 
             except aiohttp.ClientError as e:
                 logger.error(f"API 请求错误: {str(e)}")
-                yield event.plain_result(f"API 请求错误: {str(e)}")
-                return
+                return None, f"API 请求错误: {str(e)}"
             except Exception as e:
                 logger.error(f"发生未知错误: {str(e)}")
-                yield event.plain_result(f"发生未知错误: {str(e)}")
-                return
+                return None, f"发生未知错误: {str(e)}"
 
-        yield event.plain_result(f"获取图片失败，已重试 {retry_count} 次")
+        return None, f"获取图片失败，已重试 {retry_count} 次"
+
+    async def _get_setu(self, event: AstrMessageEvent, tags: str = None, r18: int = 0):
+        event = self._unwrap_event(event)
+        chain, error = await self._fetch_setu_chain(tags, r18)
+        if error:
+            yield event.plain_result(error)
+            return
+
+        send_forward = self.send_forward
+        if send_forward and event.get_platform_name() != "aiocqhttp":
+            send_forward = False
+            logger.info("不支持当前平台，已禁用转发")
+
+        if send_forward:
+            node = Node(
+                uin=event.get_self_id(),
+                name="Setu",
+                content=chain,
+            )
+            yield event.chain_result([node])
+        else:
+            yield event.chain_result(chain)
 
     @setu.command("get")
     async def get(self, event: AstrMessageEvent, tags: str = None):
@@ -218,13 +232,13 @@ class PluginSetu(Star):
         Args:
              tags(string): 图片标签，可为空；请优先使用日语标签；如果用户用中文或英文描述，请先翻译成适合日本插画网站检索的日语标签；多个 OR 标签用英文逗号分隔，多个 AND 条件用 & 分隔
         '''
-        async for result in self._get_setu(
-            event,
-            tags or None,
-            r18=self.r18,
-            reply_after_image=True,
-        ):
-            yield result
+        event = self._unwrap_event(event)
+        chain, error = await self._fetch_setu_chain(tags or None, self.r18)
+        if error:
+            return error
+
+        await event.send(MessageChain(chain=chain, type="tool_direct_result"))
+        return "涩图已发送。"
 
     @setu.command("r18")
     async def get_r18(self, event: AstrMessageEvent, tags: str = None):
