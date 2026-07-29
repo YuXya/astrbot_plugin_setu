@@ -4,6 +4,9 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.core.message.message_event_result import MessageChain
 import aiohttp
+import asyncio
+import math
+from time import monotonic
 
 
 async def image_obfus(img_data):
@@ -56,10 +59,17 @@ async def image_obfus(img_data):
     "astrbot_plugin_setu",
     "Omnisch",
     "Astrbot 色图插件，支持自定义配置与标签指定",
-    "2.1.0",
+    "2.1.1",
     "https://github.com/Omnisch/astrbot_plugin_setu",
 )
 class PluginSetu(Star):
+    USER_RATE_LIMIT_SECONDS = 60
+    RATE_LIMIT_MESSAGE = (
+        "调用过于频繁：普通用户每 60 秒只能获取 1 张图片，"
+        "请 {seconds} 秒后再试。管理员调用次数不受限制。"
+    )
+    UNKNOWN_USER_MESSAGE = "无法识别当前用户，暂时无法获取图片。"
+
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.config = config
@@ -70,6 +80,9 @@ class PluginSetu(Star):
         self.image_size = self.config.get("image_size", "original")
         self.image_info = self.config.get("image_info", "带标签的基本信息")
         self.detailed_info = ""
+        self._last_user_calls: dict[tuple[str, str], float] = {}
+        self._rate_limit_lock = asyncio.Lock()
+        self._last_rate_limit_cleanup = monotonic()
 
     def _normalize_r18(self, r18) -> int:
         try:
@@ -105,6 +118,52 @@ class PluginSetu(Star):
         """兼容旧版 LLM Tool 误传 ContextWrapper 的情况。"""
         return getattr(getattr(event, "context", None), "event", event)
 
+    async def _get_rate_limit_message(self, event: AstrMessageEvent):
+        """占用普通用户的一次调用额度；管理员不受限制。"""
+        if event.is_admin():
+            return None
+
+        sender_id = str(event.get_sender_id() or "").strip()
+        if not sender_id:
+            logger.warning("无法获取发送者 ID，已拒绝图片请求")
+            return self.UNKNOWN_USER_MESSAGE
+
+        platform_id_getter = getattr(event, "get_platform_id", None)
+        if callable(platform_id_getter):
+            platform_id = platform_id_getter()
+        else:
+            platform_id = event.get_platform_name()
+        if not platform_id:
+            platform_id = event.get_platform_name()
+
+        user_key = (str(platform_id), sender_id)
+        now = monotonic()
+
+        async with self._rate_limit_lock:
+            if (
+                now - self._last_rate_limit_cleanup
+                >= self.USER_RATE_LIMIT_SECONDS
+            ):
+                cutoff = now - self.USER_RATE_LIMIT_SECONDS
+                self._last_user_calls = {
+                    key: called_at
+                    for key, called_at in self._last_user_calls.items()
+                    if called_at > cutoff
+                }
+                self._last_rate_limit_cleanup = now
+
+            last_call = self._last_user_calls.get(user_key)
+            if last_call is not None:
+                remaining = self.USER_RATE_LIMIT_SECONDS - (now - last_call)
+                if remaining > 0:
+                    return self.RATE_LIMIT_MESSAGE.format(
+                        seconds=max(1, math.ceil(remaining))
+                    )
+
+            self._last_user_calls[user_key] = now
+
+        return None
+
     def _build_image_chain(self, img_data, img_title, img_author, img_pid, img_tags):
         self.detailed_info = (
             f"标题：{img_title}\n"
@@ -130,75 +189,79 @@ class PluginSetu(Star):
     async def _fetch_setu_chain(self, tags: str = None, r18: int = 0):
         tags = self.parse_tags(tags)
 
-        retry_count = 0
-        while retry_count < 3:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    data = {
-                        "r18": r18,
-                        "size": [self.image_size],
-                        "tag": tags,
-                        "excludeAI": self.exclude_ai,
-                        "proxy": "i.yuki.sh",
-                    }
+        try:
+            async with aiohttp.ClientSession() as session:
+                data = {
+                    "r18": r18,
+                    "num": 1,
+                    "size": [self.image_size],
+                    "tag": tags,
+                    "excludeAI": self.exclude_ai,
+                    "proxy": "i.yuki.sh",
+                }
 
-                    async with session.post(
-                        "https://api.lolicon.app/setu/v2",
-                        json=data,
-                        timeout=aiohttp.ClientTimeout(total=120),
-                    ) as response:
-                        response.raise_for_status()
-                        resp = await response.json()
+                async with session.post(
+                    "https://api.lolicon.app/setu/v2",
+                    json=data,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as response:
+                    response.raise_for_status()
+                    resp = await response.json()
 
-                        if not resp["data"]:
-                            return None, "未获取到图片"
+                if not resp["data"]:
+                    return None, "未获取到图片"
 
-                        img = resp["data"][0]
-                        img_url = img["urls"][self.image_size]
-                        img_title = resp["data"][0]["title"]
-                        img_author = resp["data"][0]["author"]
-                        img_pid = resp["data"][0]["pid"]
-                        img_tags = resp["data"][0]["tags"]
+                img = resp["data"][0]
+                img_url = img["urls"][self.image_size]
+                img_title = img["title"]
+                img_author = img["author"]
+                img_pid = img["pid"]
+                img_tags = img["tags"]
 
-                        try:
-                            async with session.get(
-                                img_url, timeout=aiohttp.ClientTimeout(total=120)
-                            ) as img_response:
-                                img_response.raise_for_status()
-                                img_data = await img_response.read()
+                retry_count = 0
+                while retry_count < 3:
+                    try:
+                        async with session.get(
+                            img_url, timeout=aiohttp.ClientTimeout(total=120)
+                        ) as img_response:
+                            img_response.raise_for_status()
+                            img_data = await img_response.read()
 
-                                if self.image_hash_break:
-                                    img_data = await image_obfus(img_data)
+                        if self.image_hash_break:
+                            img_data = await image_obfus(img_data)
 
-                                return (
-                                    self._build_image_chain(
-                                        img_data,
-                                        img_title,
-                                        img_author,
-                                        img_pid,
-                                        img_tags,
-                                    ),
-                                    None,
-                                )
+                        return (
+                            self._build_image_chain(
+                                img_data,
+                                img_title,
+                                img_author,
+                                img_pid,
+                                img_tags,
+                            ),
+                            None,
+                        )
+                    except aiohttp.ClientError as e:
+                        retry_count += 1
+                        logger.warning(
+                            f"图片下载失败，正在重试 ({retry_count}/3): {str(e)}"
+                        )
 
-                        except aiohttp.ClientError as e:
-                            retry_count += 1
-                            logger.warning(
-                                f"图片下载失败，正在重试 ({retry_count}/3): {str(e)}"
-                            )
-                            continue
+                return None, f"获取图片失败，已重试 {retry_count} 次"
 
-            except aiohttp.ClientError as e:
-                logger.error(f"API 请求错误: {str(e)}")
-                return None, f"API 请求错误: {str(e)}"
-            except Exception as e:
-                logger.error(f"发生未知错误: {str(e)}")
-                return None, f"发生未知错误: {str(e)}"
-
-        return None, f"获取图片失败，已重试 {retry_count} 次"
+        except aiohttp.ClientError as e:
+            logger.error(f"API 请求错误: {str(e)}")
+            return None, f"API 请求错误: {str(e)}"
+        except Exception as e:
+            logger.error(f"发生未知错误: {str(e)}")
+            return None, f"发生未知错误: {str(e)}"
 
     async def _get_setu(self, event: AstrMessageEvent, tags: str = None, r18: int = 0):
         event = self._unwrap_event(event)
+        rate_limit_message = await self._get_rate_limit_message(event)
+        if rate_limit_message:
+            yield event.plain_result(rate_limit_message)
+            return
+
         chain, error = await self._fetch_setu_chain(tags, r18)
         if error:
             yield event.plain_result(error)
@@ -227,12 +290,18 @@ class PluginSetu(Star):
 
     @filter.llm_tool(name="setu_get")
     async def llm_get_setu(self, event: AstrMessageEvent, tags: str = ""):
-        '''获取一张随机涩图，或根据标签获取特定涩图。当用户想要图片、涩图、来张图、指定标签图片时调用。
+        '''获取并发送一张随机涩图，或根据标签获取一张特定涩图。当用户想要图片、涩图、来张图、指定标签图片时调用。
+
+        调用限制（必须遵守）：普通用户按发送者独立限流，在任意连续 60 秒内最多调用一次；管理员调用次数不受限制。每次调用只允许查找并发送 1 张图片。服务端会强制执行；收到限流提示后不得在冷却时间内重试，也不得通过连续或并行重复调用来获取多张图片。
 
         Args:
              tags(string): 图片标签，可为空；只使用用户明确说出的标签，不得自行添加、联想、补充任何tag；中文或英文标签可翻译为适合日本插画网站检索的日语标签，但不得改变或扩展原意；多个 OR 标签用英文逗号分隔，多个 AND 条件用 & 分隔
         '''
         event = self._unwrap_event(event)
+        rate_limit_message = await self._get_rate_limit_message(event)
+        if rate_limit_message:
+            return rate_limit_message
+
         chain, error = await self._fetch_setu_chain(tags or None, self.r18)
         if error:
             return error
@@ -258,6 +327,7 @@ class PluginSetu(Star):
             "使用方法：\n"
             "  /setu get 获取一张随机涩图\n"
             "  /setu get <tag> 获取特定标签的涩图\n"
+            "  - 普通用户每 60 秒最多获取 1 张图片，管理员不限次数\n"
             "  - 使用 , 分隔 OR 条件,使用 & 分隔 AND 条件\n"
             "  - 标签中不得有空格，AND 条件最多 3 组，OR 条件每组最多 20 个\n"
             "  /setu details 查看上一张涩图的详细信息"
